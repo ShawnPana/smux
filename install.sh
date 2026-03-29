@@ -276,7 +276,17 @@ EOF
 
 # --- Main ---
 
-case "${1:-install}" in
+# When piped from curl (no args), default to install.
+# When run as the installed CLI (no args), default to help.
+if [[ $# -eq 0 ]]; then
+  if [[ -d "$SMUX_DIR" && -x "$BIN_DIR/smux" ]]; then
+    set -- help
+  else
+    set -- install
+  fi
+fi
+
+case "$1" in
   install)                    cmd_install ;;
   update)                     cmd_update ;;
   uninstall|remove)           cmd_uninstall ;;
