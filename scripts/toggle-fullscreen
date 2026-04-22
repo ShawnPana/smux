@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Toggle fullscreen on a tmux pane. Usage: toggle-fullscreen <pane_id>.
+# First invocation: stash current window id on the pane and `break-pane` it
+# into its own new window. Second invocation: read the stashed id and
+# `join-pane` back; if the origin window no longer exists, just clear the
+# stash and leave the pane in place.
+set -u
+
+PANE="${1:-}"
+[ -z "$PANE" ] && exit 0
+
+IFS='|' read -r ORIG WIN NPANES <<<"$(
+  tmux display-message -p -t "$PANE" '#{@orig-window}|#{window_id}|#{window_panes}' 2>/dev/null
+)"
+
+if [ -n "$ORIG" ] && [ "$ORIG" != "$WIN" ]; then
+  # Stash points at a different window: try to return there.
+  if tmux list-windows -a -F '#{window_id}' 2>/dev/null | grep -qx "$ORIG"; then
+    tmux join-pane -s "$PANE" -t "$ORIG"
+  fi
+  tmux set-option -pu -t "$PANE" @orig-window
+elif [ "${NPANES:-1}" -gt 1 ]; then
+  # Not currently fullscreen (or stash was stale): break out.
+  tmux set-option -p -t "$PANE" @orig-window "$WIN"
+  tmux break-pane -s "$PANE"
+fi

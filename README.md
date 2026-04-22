@@ -41,6 +41,7 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+o` | Cycle layouts |
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
+| `Option+f` | Toggle pane fullscreen (move to own window, toggle back) |
 
 ### Windows
 

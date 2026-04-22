@@ -168,6 +168,11 @@ cmd_install() {
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
 
+  # 7b. Download toggle-fullscreen
+  info "Downloading toggle-fullscreen..."
+  download "$BASE_URL/scripts/toggle-fullscreen" "$BIN_DIR/toggle-fullscreen"
+  chmod +x "$BIN_DIR/toggle-fullscreen"
+
   # 8. Save smux CLI
   info "Installing smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -208,6 +213,10 @@ cmd_update() {
   info "Downloading tmux-bridge..."
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
+
+  info "Downloading toggle-fullscreen..."
+  download "$BASE_URL/scripts/toggle-fullscreen" "$BIN_DIR/toggle-fullscreen"
+  chmod +x "$BIN_DIR/toggle-fullscreen"
 
   info "Updating smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -267,10 +276,11 @@ Commands:
   help        Show this help
 
 Files:
-  ~/.smux/tmux.conf          tmux configuration
-  ~/.smux/bin/tmux-bridge    cross-pane communication CLI
-  ~/.smux/bin/smux           this CLI
-  ~/.smux/backups/           config backups
+  ~/.smux/tmux.conf                tmux configuration
+  ~/.smux/bin/tmux-bridge          cross-pane communication CLI
+  ~/.smux/bin/toggle-fullscreen    Option+F pane fullscreen toggle
+  ~/.smux/bin/smux                 this CLI
+  ~/.smux/backups/                 config backups
 EOF
 }
 
