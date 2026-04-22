@@ -296,7 +296,7 @@ EOF
 
 # --- Main ---
 
-case "${1:-install}" in
+case "${1:-help}" in
   install)                    cmd_install ;;
   update)                     cmd_update ;;
   uninstall|remove)           cmd_uninstall ;;
