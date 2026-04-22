@@ -43,6 +43,7 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
 | `Option+f` | Toggle pane fullscreen (move to own window, toggle back) |
+| `Option+Escape` | Leave fullscreen (no-op if the pane isn't fullscreened) |
 
 ### Windows
 
