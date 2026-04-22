@@ -38,7 +38,8 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+i/k/j/l` | Navigate up/down/left/right (no wrap) |
 | `Option+n` | New pane (split + auto-tile) |
 | `Option+w` | Close pane |
-| `Option+o` | Cycle layouts |
+| `Option+o` | Re-tile panes into the best-fit layout for the window shape |
+| `Option+p` | Cycle through tmux's built-in layouts |
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
 | `Option+f` | Toggle pane fullscreen (move to own window, toggle back) |

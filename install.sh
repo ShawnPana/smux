@@ -173,6 +173,11 @@ cmd_install() {
   download "$BASE_URL/scripts/toggle-fullscreen" "$BIN_DIR/toggle-fullscreen"
   chmod +x "$BIN_DIR/toggle-fullscreen"
 
+  # 7c. Download smart-layout
+  info "Downloading smart-layout..."
+  download "$BASE_URL/scripts/smart-layout" "$BIN_DIR/smart-layout"
+  chmod +x "$BIN_DIR/smart-layout"
+
   # 8. Save smux CLI
   info "Installing smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -217,6 +222,10 @@ cmd_update() {
   info "Downloading toggle-fullscreen..."
   download "$BASE_URL/scripts/toggle-fullscreen" "$BIN_DIR/toggle-fullscreen"
   chmod +x "$BIN_DIR/toggle-fullscreen"
+
+  info "Downloading smart-layout..."
+  download "$BASE_URL/scripts/smart-layout" "$BIN_DIR/smart-layout"
+  chmod +x "$BIN_DIR/smart-layout"
 
   info "Updating smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -279,6 +288,7 @@ Files:
   ~/.smux/tmux.conf                tmux configuration
   ~/.smux/bin/tmux-bridge          cross-pane communication CLI
   ~/.smux/bin/toggle-fullscreen    Option+F pane fullscreen toggle
+  ~/.smux/bin/smart-layout         Option+O aspect-aware re-layout
   ~/.smux/bin/smux                 this CLI
   ~/.smux/backups/                 config backups
 EOF

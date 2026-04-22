@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Pick the tmux layout that makes panes closest to a "nice" shape (target
+# aspect = 2 cells wide : 1 cell tall, which renders roughly square in
+# pixels). Considers even-horizontal, even-vertical, and tiled; applies the
+# one with the lowest aspect error. Usage: smart-layout [<pane_id>]
+set -u
+
+TGT="${1:-}"
+read -r N W H <<<"$(
+  tmux display-message -p ${TGT:+-t "$TGT"} '#{window_panes} #{window_width} #{window_height}' 2>/dev/null
+)"
+
+[ -z "${N:-}" ] && exit 0
+[ "$N" -le 1 ] && exit 0
+
+LAYOUT=$(awk -v n="$N" -v w="$W" -v h="$H" 'BEGIN {
+  target = 2.0
+  tc = int(sqrt(n)); if (tc*tc < n) tc++
+  tr = int(n/tc);    if (tc*tr < n) tr++
+
+  split("even-horizontal even-vertical tiled", names, " ")
+  cols[1] = n;  rows[1] = 1
+  cols[2] = 1;  rows[2] = n
+  cols[3] = tc; rows[3] = tr
+
+  best_name = "tiled"; best_err = 1e9
+  for (i = 1; i <= 3; i++) {
+    a = (w/cols[i]) / (h/rows[i])
+    err = (a > target) ? a/target : target/a
+    if (err < best_err) { best_err = err; best_name = names[i] }
+  }
+  print best_name
+}')
+
+tmux select-layout ${TGT:+-t "$TGT"} "$LAYOUT"
