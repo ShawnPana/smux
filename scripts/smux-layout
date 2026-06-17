@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# smux-layout — undo/redo history for a tmux window's pane layout.
+#
+# Tracks the GEOMETRY of panes (sizes/positions/order) per window and lets you
+# step backward/forward through it. Driven by the `window-layout-changed` hook,
+# so resizes (keyboard and mouse), swaps, splits, and layout cycling are all
+# recorded. Consecutive pure resizes (e.g. a mouse drag) coalesce into a single
+# undo step; structural changes (split/swap/kill) each get their own step.
+#
+# Limitation: this restores layout only. It cannot resurrect a killed pane —
+# the process inside it is gone — so "undo" after closing a pane restores the
+# arrangement of the panes that still exist, not the dead one.
+#
+# Usage: smux-layout {record|undo|redo} [window-id]
+set -uo pipefail
+
+cmd="${1:-}"
+winid="${2:-}"
+
+tmux_q() {
+  if [[ -n "$winid" ]]; then tmux display-message -t "$winid" -p "$1"
+  else tmux display-message -p "$1"; fi
+}
+apply_layout() {
+  if [[ -n "$winid" ]]; then tmux select-layout -t "$winid" "$1"
+  else tmux select-layout "$1"; fi
+}
+
+# Milliseconds since epoch (perl is always present on macOS; fall back to seconds).
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time()*1000' 2>/dev/null || echo $(( $(date +%s) * 1000 )); }
+
+# Ordered list of pane IDs in a layout string (4th field of each leaf cell).
+# Changes when panes are added/removed (split/kill) or reordered (swap), but
+# not on a resize — that's how we tell a drag apart from a structural change.
+pane_seq() {
+  printf '%s\n' "$1" | grep -oE '[0-9]+x[0-9]+,[0-9]+,[0-9]+,[0-9]+' \
+    | sed -E 's/.*,([0-9]+)$/\1/' | paste -sd, -
+}
+
+key=$(tmux_q '#{session_id}_#{window_id}' | tr -dc 'A-Za-z0-9_')
+[[ -n "$key" ]] || exit 0
+
+dir="${TMPDIR:-/tmp}/smux-layout"
+mkdir -p "$dir"
+stack="$dir/$key.stack"     # one layout string per line
+idxf="$dir/$key.idx"        # 1-based pointer to the current state
+timf="$dir/$key.time"       # epoch of last record (for coalescing)
+structf="$dir/$key.struct"  # 1 if the tip entry was a structural change
+
+get_idx() { [[ -f "$idxf" ]] && cat "$idxf" || echo 0; }
+total()   { [[ -f "$stack" ]] && { wc -l < "$stack" | tr -d ' '; } || echo 0; }
+line_at() { sed -n "${1}p" "$stack" 2>/dev/null; }
+
+case "$cmd" in
+  record)
+    cur=$(tmux_q '#{window_layout}')
+    [[ -n "$cur" ]] || exit 0
+    i=$(get_idx); n=$(total)
+    # No-op if the live layout already matches the pointer. This also makes the
+    # hook fired by our own undo/redo select-layout a no-op (prevents corruption).
+    if (( i >= 1 )) && [[ "$cur" == "$(line_at "$i")" ]]; then exit 0; fi
+
+    curseq=$(pane_seq "$cur")
+    prevseq=""; (( i >= 1 )) && prevseq=$(pane_seq "$(line_at "$i")")
+    now=$(now_ms)
+    last=$([[ -f "$timf" ]] && cat "$timf" || echo 0)
+    tipstruct=$([[ -f "$structf" ]] && cat "$structf" || echo 1)
+
+    # Coalesce only a rapid run of pure resizes at the tip (e.g. a mouse drag):
+    # within 500ms, same pane sequence, and the tip is not a structural change.
+    if (( i == n && n >= 1 && now - last <= 500 )) \
+       && [[ "$curseq" == "$prevseq" && "$tipstruct" == "0" ]]; then
+      { head -n $((n - 1)) "$stack" 2>/dev/null; echo "$cur"; } > "$stack.tmp" && mv "$stack.tmp" "$stack"
+    else
+      { head -n "$i" "$stack" 2>/dev/null; echo "$cur"; } > "$stack.tmp" && mv "$stack.tmp" "$stack"
+      echo "$(total)" > "$idxf"
+      if [[ -z "$prevseq" || "$curseq" != "$prevseq" ]]; then echo 1 > "$structf"; else echo 0 > "$structf"; fi
+    fi
+    echo "$now" > "$timf"
+    ;;
+  undo)
+    i=$(get_idx)
+    if (( i <= 1 )); then tmux display-message "smux-layout: nothing to undo"; exit 0; fi
+    new=$((i - 1))
+    target=$(line_at "$new")
+    # select-layout can only re-apply sizes to the SAME panes in the SAME order,
+    # so refuse to cross a split/swap/close instead of corrupting the state.
+    if [[ "$(pane_seq "$target")" != "$(pane_seq "$(tmux_q '#{window_layout}')")" ]]; then
+      tmux display-message "smux-layout: can't undo across a split/swap/close"; exit 0
+    fi
+    echo 0 > "$timf"               # reset coalesce timer so the next edit is a fresh step
+    echo "$new" > "$idxf"          # write before applying so the hook sees a no-op
+    apply_layout "$target"
+    tmux display-message "smux-layout: undo [$new/$(total)]"
+    ;;
+  redo)
+    i=$(get_idx); n=$(total)
+    if (( i >= n )); then tmux display-message "smux-layout: nothing to redo"; exit 0; fi
+    new=$((i + 1))
+    target=$(line_at "$new")
+    if [[ "$(pane_seq "$target")" != "$(pane_seq "$(tmux_q '#{window_layout}')")" ]]; then
+      tmux display-message "smux-layout: can't redo across a split/swap/close"; exit 0
+    fi
+    echo 0 > "$timf"
+    echo "$new" > "$idxf"
+    apply_layout "$target"
+    tmux display-message "smux-layout: redo [$new/$n]"
+    ;;
+  *)
+    echo "usage: smux-layout {record|undo|redo} [window-id]" >&2
+    exit 1 ;;
+esac

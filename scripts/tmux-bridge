@@ -120,7 +120,7 @@ Commands:
   message <target> <text>   Type text with auto-prepended sender info and reply target
   read <target> [lines]     Read last N lines from pane (default: 50)
   keys <target> <key>...    Send special keys (Enter, Escape, C-c, etc.)
-  name <target> <label>     Label a pane (visible in tmux border)
+  name [target] <label>     Label a pane (visible in tmux border; defaults to this pane)
   resolve <label>           Print pane target for a label
   id                        Print this pane's ID ($TMUX_PANE)
   doctor                    Diagnose tmux connectivity issues
@@ -279,13 +279,23 @@ cmd_keys() {
 }
 
 cmd_name() {
-  require_args 2 $# "name"
+  require_args 1 $# "name"
   require_tmux
-  local target
-  target=$(resolve_target "$1")
+  local target label
+  if (( $# == 1 )); then
+    # No target given — label the pane this command is running in
+    if [[ -z "${TMUX_PANE:-}" ]]; then
+      die "not running inside a tmux pane (\$TMUX_PANE is unset) — pass an explicit target"
+    fi
+    target="$TMUX_PANE"
+    label="$1"
+  else
+    target=$(resolve_target "$1")
+    label="$2"
+  fi
   validate_target "$target"
 
-  tmx set-option -p -t "$target" @name "$2"
+  tmx set-option -p -t "$target" @name "$label"
 }
 
 cmd_resolve() {

@@ -44,7 +44,7 @@ error: must read the pane before interacting. Run: tmux-bridge read codex
 | `tmux-bridge message <target> <text>` | Type text with auto sender info and reply target | `tmux-bridge message codex "review src/auth.ts"` |
 | `tmux-bridge read <target> [lines]` | Read last N lines (default 50) | `tmux-bridge read codex 100` |
 | `tmux-bridge keys <target> <key>...` | Send special keys | `tmux-bridge keys codex Enter` |
-| `tmux-bridge name <target> <label>` | Label a pane (visible in tmux border) | `tmux-bridge name %3 codex` |
+| `tmux-bridge name [target] <label>` | Label a pane (visible in tmux border); target defaults to your own pane | `tmux-bridge name codex` |
 | `tmux-bridge resolve <label>` | Print pane target for a label | `tmux-bridge resolve codex` |
 | `tmux-bridge id` | Print this pane's ID | `tmux-bridge id` |
 
@@ -91,7 +91,7 @@ The receiver gets: who sent it (`from`), the exact pane to reply to (`pane`), an
 
 ```bash
 # 1. Label yourself
-tmux-bridge name "$(tmux-bridge id)" claude
+tmux-bridge name claude
 
 # 2. Discover other panes
 tmux-bridge list
