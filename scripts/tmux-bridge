@@ -3,19 +3,19 @@
 # Any tool that can run bash can use this to talk to other panes.
 set -euo pipefail
 
-VERSION="2.1.0"
+VERSION="2.2.0"
 
 # --- Helpers ---
 
 die() { echo "error: $*" >&2; exit 1; }
 
-# State lives here (read guards). Entries are validated against a pane
-# fingerprint (the pane's shell pid), so stale entries from a previous boot
-# or a recreated pane invalidate themselves.
+# State lives here (read guards, trust grants). Entries are validated against
+# a pane fingerprint (the pane's shell pid), so stale entries from a previous
+# boot or a recreated pane invalidate themselves.
 STATE_DIR="${TMUX_BRIDGE_STATE:-$HOME/.smux/state/bridge}"
 
 init_state() {
-  mkdir -p "$STATE_DIR/guards"
+  mkdir -p "$STATE_DIR/guards" "$STATE_DIR/trust"
 }
 
 # Sanitize a pane id for use in filenames: %66 → _66
@@ -27,6 +27,10 @@ sender_key() { key_of "${TMUX_PANE:-nosender}"; }
 # different after reboot or pane recreation — exactly the invalidation we want.
 pane_fp() {
   tmx display-message -t "$1" -p '#{pane_pid}' 2>/dev/null
+}
+
+pane_loc() {
+  tmx display-message -t "$1" -p '#{session_name}:#{window_index}' 2>/dev/null
 }
 
 # --- Read Guard ---
@@ -65,6 +69,42 @@ require_read() {
 
 clear_read() {
   rm -f "$(guard_path "$1")"
+}
+
+# --- Scope & Trust ---
+# Write ops (type/message/keys) are free within the sender's window.
+# Outside the window, the target must be trusted first (one-time user approval
+# via 'tmux-bridge trust'). Trust is fingerprint-bound: if the target pane is
+# replaced (reboot, pane recreated), the grant silently expires and the agent
+# must ask the user again.
+
+trust_path() {
+  echo "$STATE_DIR/trust/$(sender_key)__$(key_of "$1")"
+}
+
+# Check a fingerprint-bound record file; removes it if stale.
+record_valid() {
+  local file="$1" target="$2" fp_stored fp_now
+  [[ -f "$file" ]] || return 1
+  fp_stored=$(awk '{print $1}' "$file")
+  fp_now=$(pane_fp "$target") || { rm -f "$file"; return 1; }
+  if [[ "$fp_stored" != "$fp_now" ]]; then
+    rm -f "$file"
+    return 1
+  fi
+}
+
+require_scope() {
+  local target="$1" sloc tloc
+  # No sender pane → a human operating from outside tmux; scope has no meaning.
+  [[ -n "${TMUX_PANE:-}" ]] || return 0
+  sloc=$(pane_loc "$TMUX_PANE") || return 0
+  tloc=$(pane_loc "$target") || die "cannot locate target $target"
+  [[ "$sloc" == "$tloc" ]] && return 0
+  record_valid "$(trust_path "$target")" "$target" && return 0
+  die "target $target is in $tloc, outside your window ($sloc).
+Cross-window messaging needs the user's approval once.
+Ask the user, then run: tmux-bridge trust $target"
 }
 
 # Detect the correct tmux server socket.
@@ -155,6 +195,8 @@ Commands:
   keys <target> <key>...    Send special keys (Enter, Escape, C-c, etc.)
   name <target> <label>     Label a pane (visible in tmux border)
   resolve <label>           Print pane target for a label
+  trust [target]            Grant cross-window messaging to a pane / list grants
+  untrust <target>          Revoke a grant
   id                        Print this pane's ID ($TMUX_PANE)
   doctor                    Diagnose tmux connectivity issues
   version                   Print version
@@ -164,6 +206,11 @@ Target resolution:
   Labels are the recommended address — they survive pane rearrangement.
   Bare window indexes are not accepted: indexes shift when panes change,
   which delivers messages to the wrong pane.
+
+Scope:
+  type/message/keys are free within your window. Outside it, the target
+  must be trusted first (user approval → 'tmux-bridge trust <target>').
+  Trust expires automatically when the target pane is replaced.
 
 Environment:
   TMUX_BRIDGE_SOCKET   Override the tmux server socket path
@@ -248,6 +295,7 @@ cmd_type() {
   require_tmux
   local target
   target=$(resolve_target "$1")
+  require_scope "$target"
   require_read "$target"
 
   tmx send-keys -t "$target" -l -- "$2"
@@ -259,6 +307,7 @@ cmd_message() {
   require_tmux
   local target
   target=$(resolve_target "$1")
+  require_scope "$target"
   require_read "$target"
 
   # Detect sender identity and location
@@ -275,6 +324,14 @@ cmd_message() {
   local header="[tmux-bridge from:${from} pane:${sender_pane} at:${session_win} — load the smux skill to reply]"
   tmx send-keys -t "$target" -l -- "${header} $2"
   clear_read "$target"
+
+  # Let the receiver reply without a fresh approval: messaging them implies
+  # the reverse path is sanctioned.
+  local sender_fp
+  sender_fp=$(pane_fp "$sender_pane") || true
+  if [[ -n "$sender_fp" ]]; then
+    echo "$sender_fp $sender_pane" > "$STATE_DIR/trust/$(key_of "$target")__$(key_of "$sender_pane")"
+  fi
 }
 
 cmd_read() {
@@ -293,6 +350,7 @@ cmd_keys() {
   require_tmux
   local target
   target=$(resolve_target "$1")
+  require_scope "$target"
   require_read "$target"
   shift
 
@@ -315,6 +373,48 @@ cmd_resolve() {
   require_args 1 $# "resolve"
   require_tmux
   resolve_label "$1"
+}
+
+cmd_trust() {
+  require_tmux
+  if [[ $# -eq 0 ]]; then
+    # List this sender's grants and their validity
+    local skey found=false
+    skey=$(sender_key)
+    printf "%-10s %-22s %s\n" "TARGET" "LOCATION" "STATUS"
+    for f in "$STATE_DIR/trust/${skey}__"*; do
+      [[ -f "$f" ]] || continue
+      found=true
+      local tkey target loc status
+      tkey="${f##*__}"
+      target="%${tkey#_}"
+      if record_valid "$f" "$target" 2>/dev/null; then
+        loc=$(pane_loc "$target")
+        status="valid"
+      else
+        loc="-"
+        status="expired (pane replaced)"
+      fi
+      printf "%-10s %-22s %s\n" "$target" "$loc" "$status"
+    done
+    $found || echo "(no grants)"
+    return
+  fi
+
+  local target fp
+  target=$(resolve_target "$1")
+  fp=$(pane_fp "$target") || die "cannot fingerprint $target"
+  echo "$fp $target" > "$(trust_path "$target")"
+  echo "trusted: $target ($(pane_loc "$target")) — valid until this pane is replaced"
+}
+
+cmd_untrust() {
+  require_args 1 $# "untrust"
+  require_tmux
+  local target
+  target=$(resolve_target "$1")
+  rm -f "$(trust_path "$target")"
+  echo "untrusted: $target"
 }
 
 cmd_id() {
@@ -385,6 +485,9 @@ cmd_doctor() {
     local labeled
     labeled=$(tmx list-panes -a -F '#{@name}' 2>/dev/null | grep -cv '^$' || echo 0)
     echo "Labeled panes:      $labeled"
+    local trusts
+    trusts=$(find "$STATE_DIR/trust" -type f 2>/dev/null | wc -l | tr -d ' ')
+    echo "Trust grants:       $trusts"
   fi
 
   echo "---"
@@ -423,6 +526,8 @@ case "$1" in
   keys)    shift; cmd_keys "$@" ;;
   name)    shift; cmd_name "$@" ;;
   resolve) shift; cmd_resolve "$@" ;;
+  trust)   shift; cmd_trust "$@" ;;
+  untrust) shift; cmd_untrust "$@" ;;
   doctor)  shift; cmd_doctor "$@" ;;
   *)       die "unknown command: $1. Run 'tmux-bridge' for usage." ;;
 esac

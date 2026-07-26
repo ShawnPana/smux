@@ -86,6 +86,21 @@ Bare window indexes are refused: indexes renumber whenever panes are created or 
 
 Read guards store the target pane's **fingerprint** (its shell pid) at read time and re-verify it on `type`/`keys`. A mismatch means the pane was replaced — reboot, respawn, or a new pane reusing old coordinates — and the action is refused with an instruction to re-read. Guards expire after 600 seconds.
 
+### Scope and Trust
+
+Write operations (`type`/`keys`/`message`) are free within the sender's window. Outside it — another window or session — the CLI refuses until the target is trusted:
+
+```
+error: target %49 is in doll:0, outside your window (shared:0).
+Cross-window messaging needs the user's approval once.
+Ask the user, then run: tmux-bridge trust %49
+```
+
+- **Grants are per sender-pane and fingerprint-bound.** When the target pane is replaced, the grant expires silently and the next send is refused again — ask the user again.
+- **Reverse trust is automatic.** When A messages B, the bridge records a grant allowing B → A, so replying never requires a fresh approval.
+- **Reads are never scoped.** Reading is how you verify targets and debug; only writes can mis-deliver.
+- `trust` with no argument lists your grants and their validity.
+
 ## Messaging Convention
 
 The CLI is **format-agnostic** — it types exactly what you give it. The recommended convention for agent-to-agent messages is to frame them yourself:

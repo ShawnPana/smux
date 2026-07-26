@@ -44,4 +44,32 @@ sleep 0.3
 # --- target resolution ---
 "$BIN" read 1 5 2>/dev/null && fail "bare window index accepted" || true
 
+# --- scope: same window free, outside blocked until trust ---
+"$BIN" read "$OTHERWIN" 5 >/dev/null
+"$BIN" type "$OTHERWIN" "x" 2>/dev/null && fail "cross-window type without trust succeeded" || true
+"$BIN" trust "$OTHERWIN" >/dev/null
+"$BIN" read "$OTHERWIN" 5 >/dev/null
+"$BIN" type "$OTHERWIN" "echo cross-ok" || fail "trusted cross-window type failed"
+"$BIN" trust | grep -q "$OTHERWIN" || fail "trust list missing grant"
+
+# trust expires when the target pane is replaced
+tmux -S "$SOCK" respawn-pane -k -t "$OTHERWIN"
+sleep 0.3
+"$BIN" read "$OTHERWIN" 5 >/dev/null
+"$BIN" type "$OTHERWIN" "x" 2>/dev/null && fail "trust survived pane replacement" || true
+
+# untrust revokes
+"$BIN" trust "$OTHERSESS" >/dev/null
+"$BIN" untrust "$OTHERSESS" >/dev/null
+"$BIN" read "$OTHERSESS" 5 >/dev/null
+"$BIN" type "$OTHERSESS" "x" 2>/dev/null && fail "untrust did not revoke" || true
+
+# --- reverse trust: receiver may reply cross-window without a fresh grant ---
+"$BIN" trust "$OTHERWIN" >/dev/null
+"$BIN" read "$OTHERWIN" 5 >/dev/null
+"$BIN" message "$OTHERWIN" "ping"
+TMUX_PANE="$OTHERWIN" "$BIN" read "$SENDER" 5 >/dev/null
+TMUX_PANE="$OTHERWIN" "$BIN" type "$SENDER" "echo reply-ok" \
+  || fail "receiver could not reply without explicit trust"
+
 echo "PASS test_tmux_bridge"
