@@ -15,7 +15,7 @@ A CLI that lets any AI agent interact with any other tmux pane. Works via plain 
 
 ### DO NOT WAIT OR POLL
 
-Other panes have agents that will reply to you via tmux-bridge. Their reply appears directly in YOUR pane as a `[tmux-bridge from:...]` message. Do not sleep, poll, read the target pane for a response, or loop. Type your message, press Enter, and move on.
+Other panes have agents that will reply to you via tmux-bridge. Their reply appears directly in YOUR pane as an `[smux ...]` message. Do not sleep, poll, read the target pane for a response, or loop. Type your message, press Enter, and move on.
 
 The ONLY time you read a target pane is:
 - **Before** interacting with it (enforced by the read guard)
@@ -39,7 +39,7 @@ error: must read the pane before interacting. Run: tmux-bridge read codex
 
 | Command | Description | Example |
 |---|---|---|
-| `tmux-bridge list` | Show all panes with target, pid, command, size, label | `tmux-bridge list` |
+| `tmux-bridge list [-s\|-a]` | Show panes in your window; `-s` session, `-a` all | `tmux-bridge list -a` |
 | `tmux-bridge type <target> <text>` | Type text without pressing Enter | `tmux-bridge type codex "hello"` |
 | `tmux-bridge message <target> <text>` | Type text with auto sender info and reply target | `tmux-bridge message codex "review src/auth.ts"` |
 | `tmux-bridge read <target> [lines]` | Read last N lines (default 50) | `tmux-bridge read codex 100` |
@@ -95,10 +95,11 @@ tmux-bridge read worker 20                   # 5. READ — see the result
 The `message` command auto-prepends sender info and location:
 
 ```
-[tmux-bridge from:claude pane:%4 at:3:0.0] Please review src/auth.ts
+[smux claude@%4 | load the smux skill; reply: tmux-bridge msg %4] Please review src/auth.ts
+[smux claude@%4] subsequent messages
 ```
 
-The receiver gets: who sent it (`from`), the exact pane to reply to (`pane`), and the session/window location (`at`). When you see this header, reply using tmux-bridge to the pane ID from the header.
+First contact carries the onboarding (skill + reply recipe); later messages drop it. `claude` is the sender's label, `%4` the pane to reply to. When you see this header, reply using tmux-bridge to that pane id.
 
 ### Agent-to-Agent Workflow
 
@@ -128,7 +129,7 @@ tmux-bridge keys codex Enter
 
 **Agent B (codex) sees in their prompt:**
 ```
-[tmux-bridge from:claude pane:%4 at:3:0.0] What is the test coverage for src/auth.ts?
+[smux claude@%4 | load the smux skill; reply: tmux-bridge msg %4] What is the test coverage for src/auth.ts?
 ```
 
 **Agent B replies using the pane ID from the header:**

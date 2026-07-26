@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for tmux-bridge: read guard fingerprinting, target resolution.
-# Runs on an isolated tmux server.
+# Tests for tmux-bridge v3: read guard fingerprinting, window scope + trust,
+# first-contact prefix, list scoping. Runs on an isolated tmux server.
 set -euo pipefail
 BIN="$(cd "$(dirname "$0")/.." && pwd)/scripts/tmux-bridge"
 fail(){ echo "FAIL: $1"; exit 1; }
@@ -64,6 +64,27 @@ sleep 0.3
 "$BIN" read "$OTHERSESS" 5 >/dev/null
 "$BIN" type "$OTHERSESS" "x" 2>/dev/null && fail "untrust did not revoke" || true
 
+# --- message prefix: first contact verbose, then minimal ---
+"$BIN" read "$NEIGHBOR" 5 >/dev/null
+"$BIN" message "$NEIGHBOR" "hello-one"
+out=$(tmux -S "$SOCK" capture-pane -t "$NEIGHBOR" -p -J | tr -d '\n')
+echo "$out" | grep -q "\[smux ${SENDER} | load the smux skill; reply: tmux-bridge msg ${SENDER}\] hello-one" \
+  || fail "first-contact header wrong: $out"
+tmux -S "$SOCK" send-keys -t "$NEIGHBOR" C-u
+"$BIN" read "$NEIGHBOR" 5 >/dev/null
+"$BIN" message "$NEIGHBOR" "hello-two"
+out=$(tmux -S "$SOCK" capture-pane -t "$NEIGHBOR" -p -J | tr -d '\n')
+echo "$out" | grep -q "\[smux ${SENDER}\] hello-two" || fail "minimal header wrong: $out"
+echo "$out" | grep -q "reply:.*hello-two" && fail "second contact still verbose" || true
+
+# label shows up in header
+"$BIN" name "$SENDER" tester
+tmux -S "$SOCK" send-keys -t "$NEIGHBOR" C-u
+"$BIN" read "$NEIGHBOR" 5 >/dev/null
+"$BIN" message "$NEIGHBOR" "hello-three"
+out=$(tmux -S "$SOCK" capture-pane -t "$NEIGHBOR" -p -J | tr -d '\n')
+echo "$out" | grep -q "\[smux tester@${SENDER}\] hello-three" || fail "labeled header wrong: $out"
+
 # --- reverse trust: receiver may reply cross-window without a fresh grant ---
 "$BIN" trust "$OTHERWIN" >/dev/null
 "$BIN" read "$OTHERWIN" 5 >/dev/null
@@ -71,5 +92,15 @@ sleep 0.3
 TMUX_PANE="$OTHERWIN" "$BIN" read "$SENDER" 5 >/dev/null
 TMUX_PANE="$OTHERWIN" "$BIN" type "$SENDER" "echo reply-ok" \
   || fail "receiver could not reply without explicit trust"
+
+# --- list scoping ---
+out=$("$BIN" list)
+echo "$out" | grep -q "$NEIGHBOR" || fail "list missing same-window pane"
+echo "$out" | grep -q "$OTHERWIN" && fail "default list leaked other window" || true
+out=$("$BIN" list --session)
+echo "$out" | grep -q "$OTHERWIN" || fail "list --session missing other window"
+echo "$out" | grep -q "$OTHERSESS" && fail "list --session leaked other session" || true
+out=$("$BIN" list --all)
+echo "$out" | grep -q "$OTHERSESS" || fail "list --all missing other session"
 
 echo "PASS test_tmux_bridge"
