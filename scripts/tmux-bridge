@@ -3,35 +3,68 @@
 # Any tool that can run bash can use this to talk to other panes.
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="2.1.0"
 
 # --- Helpers ---
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# State lives here (read guards). Entries are validated against a pane
+# fingerprint (the pane's shell pid), so stale entries from a previous boot
+# or a recreated pane invalidate themselves.
+STATE_DIR="${TMUX_BRIDGE_STATE:-$HOME/.smux/state/bridge}"
+
+init_state() {
+  mkdir -p "$STATE_DIR/guards"
+}
+
+# Sanitize a pane id for use in filenames: %66 → _66
+key_of() { echo "${1//%/_}"; }
+
+sender_key() { key_of "${TMUX_PANE:-nosender}"; }
+
+# Fingerprint = the pane's shell pid. Stable for the pane's lifetime,
+# different after reboot or pane recreation — exactly the invalidation we want.
+pane_fp() {
+  tmx display-message -t "$1" -p '#{pane_pid}' 2>/dev/null
+}
+
 # --- Read Guard ---
 # Enforces read-before-act: agents must read a pane before typing/keys.
+# The guard stores the target's fingerprint at read time; if the pane was
+# replaced between read and act, the act is refused.
 
-read_guard_path() {
-  local pane_id="$1"
-  # Sanitize: %66 → _66
-  echo "/tmp/tmux-bridge-read-${pane_id//%/_}"
+GUARD_TTL=600  # seconds; a read older than this is stale — re-read before acting
+
+guard_path() {
+  echo "$STATE_DIR/guards/$(sender_key)__$(key_of "$1")"
 }
 
 mark_read() {
-  touch "$(read_guard_path "$1")"
+  local fp
+  fp=$(pane_fp "$1") || return 0
+  echo "$fp $(date +%s)" > "$(guard_path "$1")"
 }
 
 require_read() {
-  local guard
-  guard=$(read_guard_path "$1")
-  if [[ ! -f "$guard" ]]; then
-    die "must read the pane before interacting. Run: tmux-bridge read $1"
+  local target="$1" guard fp_now fp_then ts now
+  guard=$(guard_path "$target")
+  [[ -f "$guard" ]] || die "must read the pane before interacting. Run: tmux-bridge read $target"
+  read -r fp_then ts < "$guard"
+  fp_now=$(pane_fp "$target") || die "target $target vanished since you read it"
+  if [[ "$fp_now" != "$fp_then" ]]; then
+    rm -f "$guard"
+    die "pane $target was replaced since you read it (different process). Run: tmux-bridge read $target"
+  fi
+  now=$(date +%s)
+  if (( now - ts > GUARD_TTL )); then
+    rm -f "$guard"
+    die "your read of $target is older than ${GUARD_TTL}s — pane layout may have changed. Run: tmux-bridge read $target"
   fi
 }
 
 clear_read() {
-  rm -f "$(read_guard_path "$1")"
+  rm -f "$(guard_path "$1")"
 }
 
 # Detect the correct tmux server socket.
@@ -127,11 +160,14 @@ Commands:
   version                   Print version
 
 Target resolution:
-  Targets can be tmux native (session:window.pane, %N) or a label set via 'name'.
-  Labels are resolved automatically — e.g. 'tmux-bridge type codex "hello"' works.
+  %N pane ids, session:win.pane coordinates, or labels set via 'name'.
+  Labels are the recommended address — they survive pane rearrangement.
+  Bare window indexes are not accepted: indexes shift when panes change,
+  which delivers messages to the wrong pane.
 
 Environment:
-  TMUX_BRIDGE_SOCKET   Override the tmux server socket path (skips auto-detection)
+  TMUX_BRIDGE_SOCKET   Override the tmux server socket path
+  TMUX_BRIDGE_STATE    Override the state directory (default ~/.smux/state/bridge)
 EOF
   exit 0
 }
@@ -140,28 +176,26 @@ require_tmux() {
   command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
 }
 
-# Resolve a target: if it looks like a tmux target (%N, session:win.pane, pure digits),
-# use it directly; otherwise treat it as a @name label and resolve.
+# Resolve any accepted target form to a canonical pane id (%N).
+# All guard state is keyed on the canonical id.
 resolve_target() {
-  local target="$1"
+  local target="$1" pane
 
-  # tmux pane ID like %0, %12
-  if [[ "$target" =~ ^%[0-9]+$ ]]; then
-    echo "$target"; return
-  fi
-
-  # Looks like a tmux target with colon or dot (session:win.pane)
-  if [[ "$target" == *:* ]] || [[ "$target" == *.* ]]; then
-    echo "$target"; return
-  fi
-
-  # Pure numeric — treat as window index
+  # Bare window index — refuse: indexes shift when panes are created/closed,
+  # which is exactly how messages end up at the wrong agent.
   if [[ "$target" =~ ^[0-9]+$ ]]; then
-    echo "$target"; return
+    die "bare window index '$target' is not accepted (indexes shift when panes change). Use a %id or a label."
   fi
 
-  # Otherwise resolve as a @name label
-  resolve_label "$target"
+  # Label → pane id
+  if [[ ! "$target" =~ ^%[0-9]+$ && "$target" != *:* && "$target" != *.* ]]; then
+    target=$(resolve_label "$target")
+  fi
+
+  # Canonicalize (also validates the target exists)
+  pane=$(tmx display-message -t "$target" -p '#{pane_id}' 2>/dev/null) \
+    || die "invalid target: $1"
+  echo "$pane"
 }
 
 resolve_label() {
@@ -173,12 +207,6 @@ resolve_label() {
     die "no pane found with label '$label'"
   fi
   echo "$result"
-}
-
-validate_target() {
-  local target="$1"
-  tmx display-message -t "$target" -p '#{pane_id}' >/dev/null 2>&1 \
-    || die "invalid target: $target"
 }
 
 require_args() {
@@ -220,7 +248,6 @@ cmd_type() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
   require_read "$target"
 
   tmx send-keys -t "$target" -l -- "$2"
@@ -232,7 +259,6 @@ cmd_message() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
   require_read "$target"
 
   # Detect sender identity and location
@@ -256,7 +282,6 @@ cmd_read() {
   require_args 1 $# "read"
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
   local lines="${2:-50}"
 
   tmx capture-pane -t "$target" -p -J -S "-${lines}"
@@ -268,7 +293,6 @@ cmd_keys() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
   require_read "$target"
   shift
 
@@ -283,7 +307,6 @@ cmd_name() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
 
   tmx set-option -p -t "$target" @name "$2"
 }
@@ -312,6 +335,7 @@ cmd_doctor() {
   echo "TMUX_PANE:          ${TMUX_PANE:-<unset>}"
   echo "TMUX:               ${TMUX:-<unset>}"
   echo "TMUX_BRIDGE_SOCKET: ${TMUX_BRIDGE_SOCKET:-<unset>}"
+  echo "State dir:          $STATE_DIR"
 
   # Socket from $TMUX
   if [[ -n "${TMUX:-}" ]]; then
@@ -379,16 +403,17 @@ cmd_doctor() {
 
 [[ $# -eq 0 ]] && usage
 
-# cmd_id and cmd_doctor(detect) don't need socket pre-init for the id case
+# cmd_id doesn't need socket pre-init
 case "$1" in
   id)      shift; cmd_id "$@"; exit ;;
   -h|--help|help) usage ;;
   version) echo "tmux-bridge $VERSION"; exit ;;
 esac
 
-# All other commands need the socket
+# All other commands need the socket and state dir
 require_tmux
 init_socket
+init_state
 
 case "$1" in
   list)    shift; cmd_list "$@" ;;
