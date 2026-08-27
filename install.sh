@@ -168,6 +168,11 @@ cmd_install() {
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
 
+  # 7b. Download smux-layout (pane resize undo/redo helper)
+  info "Downloading smux-layout..."
+  download "$BASE_URL/scripts/smux-layout" "$BIN_DIR/smux-layout"
+  chmod +x "$BIN_DIR/smux-layout"
+
   # 8. Save smux CLI
   info "Installing smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -209,6 +214,10 @@ cmd_update() {
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
 
+  info "Downloading smux-layout..."
+  download "$BASE_URL/scripts/smux-layout" "$BIN_DIR/smux-layout"
+  chmod +x "$BIN_DIR/smux-layout"
+
   info "Updating smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
   chmod +x "$BIN_DIR/smux"
@@ -249,6 +258,26 @@ cmd_uninstall() {
   echo "    export PATH=\"\$HOME/.smux/bin:\$PATH\""
 }
 
+cmd_rename() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || error "Usage: smux rename <name>"
+  [[ -n "${TMUX_PANE:-}" ]] || error "Not inside a tmux pane. Run this from within tmux."
+  tmux set-option -p -t "$TMUX_PANE" @name "$name" \
+    || error "Failed to rename pane. Is the tmux server running?"
+  info "Renamed this pane to '$name'"
+}
+
+cmd_navbar() {
+  local arg="${1:-toggle}"
+  tmux list-sessions &>/dev/null || error "tmux server not running."
+  case "$arg" in
+    on|show)    tmux set-option -g status on  && info "Navbar shown" ;;
+    off|hide)   tmux set-option -g status off && info "Navbar hidden" ;;
+    toggle|"")  tmux set-option -g status     && info "Navbar toggled" ;;
+    *)          error "Usage: smux navbar [on|off|toggle]" ;;
+  esac
+}
+
 cmd_version() {
   echo "smux $VERSION"
 }
@@ -260,15 +289,18 @@ smux — one-command tmux setup
 Usage: smux <command>
 
 Commands:
-  install     Install smux (tmux config + tmux-bridge)
-  update      Update to the latest version
-  uninstall   Remove smux and restore previous config
-  version     Print version
-  help        Show this help
+  install        Install smux (tmux config + tmux-bridge)
+  update         Update to the latest version
+  uninstall      Remove smux and restore previous config
+  rename <name>  Rename the pane you run this in (label shown in the border)
+  navbar [on|off]  Show/hide the status bar (no arg toggles)
+  version        Print version
+  help           Show this help
 
 Files:
   ~/.smux/tmux.conf          tmux configuration
   ~/.smux/bin/tmux-bridge    cross-pane communication CLI
+  ~/.smux/bin/smux-layout    pane resize undo/redo helper
   ~/.smux/bin/smux           this CLI
   ~/.smux/backups/           config backups
 EOF
@@ -289,6 +321,8 @@ case "${1:-$_smux_default}" in
   install)                    cmd_install ;;
   update)                     cmd_update ;;
   uninstall|remove)           cmd_uninstall ;;
+  rename)                     cmd_rename "${2:-}" ;;
+  navbar|statusbar)           cmd_navbar "${2:-}" ;;
   version|--version|-v|-V)    cmd_version ;;
   help|--help|-h)             cmd_help ;;
   *)                          error "Unknown command: $1. Run 'smux help' for usage." ;;

@@ -36,11 +36,18 @@ All keybindings use **Option (Alt)** with no prefix required.
 | Key | Action |
 |---|---|
 | `Option+i/k/j/l` | Navigate up/down/left/right (no wrap) |
+| `Option+Shift+i/k/j/l` | Swap pane with neighbor up/down/left/right (no wrap) |
+| `Option+z` / `Option+Shift+z` | Undo / redo pane resizing |
 | `Option+n` | New pane (split + auto-tile) |
 | `Option+w` | Close pane |
 | `Option+o` | Cycle layouts |
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
+
+> Undo/redo (`Option+z` / `Option+Shift+z`) covers pane **resizing** — including
+> mouse-drag resizes, which collapse into a single step. It can't undo a split,
+> swap, or close: tmux can't re-create a closed pane or reorder panes by replaying
+> a saved layout, so undo stops at those boundaries.
 
 ### Windows
 
@@ -49,6 +56,9 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+m` | New window |
 | `Option+u` | Next window |
 | `Option+h` | Previous window |
+| `Option+Shift+u` | Move window forward in the list (no wrap) |
+| `Option+Shift+h` | Move window backward in the list (no wrap) |
+| `Option+s` | Toggle the status bar (navbar) |
 
 ### Scrolling
 
@@ -75,11 +85,21 @@ A CLI for cross-pane communication. Any tool that can run bash can use it — Cl
 | `tmux-bridge read <target> [lines]` | Read last N lines from a pane |
 | `tmux-bridge type <target> <text>` | Type text into a pane (no Enter) |
 | `tmux-bridge keys <target> <key>...` | Send keys (Enter, Escape, C-c, etc.) |
-| `tmux-bridge name <target> <label>` | Label a pane for easy addressing |
+| `tmux-bridge name [target] <label>` | Label a pane (defaults to the current pane) |
 | `tmux-bridge resolve <label>` | Look up a pane by label |
 | `tmux-bridge id` | Print this pane's ID |
 
 See the [smux skill](skills/smux/SKILL.md) for full documentation on agent-to-agent workflows.
+
+## Rename a pane
+
+From inside any pane, label the pane you're typing in (shown in its border):
+
+```bash
+smux rename api-server
+```
+
+Equivalent: `tmux-bridge name api-server`.
 
 ## Update
 

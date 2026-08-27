@@ -68,7 +68,7 @@ error: must read the pane before interacting. Run: tmux-bridge read codex
 | `tmux-bridge type <target> <text>` | Type text without pressing Enter | `tmux-bridge type codex "hello"` |
 | `tmux-bridge read <target> [lines]` | Read last N lines (default 50) | `tmux-bridge read codex 100` |
 | `tmux-bridge keys <target> <key>...` | Send special keys | `tmux-bridge keys codex Enter` |
-| `tmux-bridge name <target> <label>` | Label a pane (visible in tmux border) | `tmux-bridge name %3 codex` |
+| `tmux-bridge name [target] <label>` | Label a pane (visible in tmux border); target defaults to your own pane | `tmux-bridge name codex` |
 | `tmux-bridge resolve <label>` | Print pane target for a label | `tmux-bridge resolve codex` |
 | `tmux-bridge id` | Print this pane's ID | `tmux-bridge id` |
 
@@ -188,7 +188,7 @@ tmux-bridge read worker 20
 ### Step 1: Label yourself
 
 ```bash
-tmux-bridge name "$(tmux-bridge id)" claude
+tmux-bridge name claude
 ```
 
 ### Step 2: Discover other panes
