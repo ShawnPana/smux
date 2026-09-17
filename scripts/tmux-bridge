@@ -379,6 +379,12 @@ cmd_doctor() {
 
 [[ $# -eq 0 ]] && usage
 
+# Orca fallback: If running inside Orca without an active tmux session,
+# seamlessly delegate to `orca bridge` so agents work out of the box.
+if [[ -z "${TMUX:-}" && -n "${ORCA_TERMINAL_HANDLE:-}" ]] && command -v orca &>/dev/null; then
+  exec orca bridge "$@"
+fi
+
 # cmd_id and cmd_doctor(detect) don't need socket pre-init for the id case
 case "$1" in
   id)      shift; cmd_id "$@"; exit ;;

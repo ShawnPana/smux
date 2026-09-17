@@ -79,6 +79,10 @@ A CLI for cross-pane communication. Any tool that can run bash can use it — Cl
 | `tmux-bridge resolve <label>` | Look up a pane by label |
 | `tmux-bridge id` | Print this pane's ID |
 
+### Orca Terminal Support
+
+`tmux-bridge` also transparently delegates to `orca bridge` when executed inside the [Orca](https://github.com/stablyai/orca) terminal emulator (when outside tmux), giving your agents the same cross-terminal communication workflow inside Orca workspaces.
+
 See the [smux skill](skills/smux/SKILL.md) for full documentation on agent-to-agent workflows.
 
 ## Update

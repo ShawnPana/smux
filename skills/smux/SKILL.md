@@ -13,6 +13,8 @@ Tmux pane control and cross-pane agent communication. Use `tmux-bridge` (the hig
 
 A CLI that lets any AI agent interact with any other tmux pane. Works via plain bash. Every command is **atomic**: `type` types text (no Enter), `keys` sends special keys, `read` captures pane content.
 
+*(Note: When executed inside the Orca terminal emulator without tmux, `tmux-bridge` transparently delegates to `orca bridge`.)*
+
 ### DO NOT WAIT OR POLL
 
 Other panes have agents that will reply to you via tmux-bridge. Their reply appears directly in YOUR pane as a `[tmux-bridge from:...]` message. Do not sleep, poll, read the target pane for a response, or loop. Type your message, press Enter, and move on.
