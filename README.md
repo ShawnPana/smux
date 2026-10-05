@@ -24,7 +24,7 @@ This installs:
 - **tmux** if not already installed (via Homebrew, apt, dnf, pacman, or apk)
 - **tmux.conf** with Option-key bindings, mouse support, pane labels, and a minimal status bar
 - **tmux-bridge** CLI for cross-pane agent communication
-- **smux-pane** so a closed pane can be revived with `Option+Shift+n`
+- **smux-pane** so closed panes and windows can be reopened with `Option+Shift+n`, like browser tabs
 
 Everything lives in `~/.smux/`.
 
@@ -37,9 +37,11 @@ All keybindings use **Option (Alt)** with no prefix required.
 | Key | Action |
 |---|---|
 | `Option+i/k/j/l` | Navigate up/down/left/right (no wrap) |
+| `Option+Shift+i/k/j/l` | Swap pane with its neighbor up/down/left/right |
 | `Option+n` | New pane (split + auto-tile) |
 | `Option+w` | Close pane |
-| `Option+Shift+n` | Revive the last closed pane (same directory; resumes its Claude Code conversation if it was running one) |
+| `Option+Shift+w` | Close window |
+| `Option+Shift+n` | Reopen the last closed pane or window in its old slot (same directory; resumes its Claude Code conversation if it was running one) |
 | `Option+o` | Cycle layouts |
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
@@ -51,6 +53,7 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+m` | New window |
 | `Option+u` | Next window |
 | `Option+h` | Previous window |
+| `Option+Shift+u/h` | Move window right/left |
 
 ### Scrolling
 

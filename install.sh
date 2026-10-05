@@ -278,7 +278,7 @@ Commands:
 Files:
   ~/.smux/tmux.conf          tmux configuration
   ~/.smux/bin/tmux-bridge    cross-pane communication CLI
-  ~/.smux/bin/smux-pane      close/revive panes (Option+w / Option+Shift+n)
+  ~/.smux/bin/smux-pane      close/reopen panes and windows (Option+w, Option+Shift+w, Option+Shift+n)
   ~/.smux/bin/smux           this CLI
   ~/.smux/backups/           config backups
 EOF
