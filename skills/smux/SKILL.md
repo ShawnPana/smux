@@ -157,6 +157,20 @@ sleep 0.1
 tmux send-keys -t shared Enter
 ```
 
+### Closed Panes and Windows
+
+The human closes panes with `Option+w` and windows with `Option+Shift+w`, and reopens the most recent one with `Option+Shift+n`. The same operations are available as a CLI, useful when the user asks you to bring back a pane or to close one in a way that can be undone:
+
+```bash
+smux-pane list                 # what can be reopened, newest first
+smux-pane revive               # reopen the most recently closed pane or window
+smux-pane close %3             # close a pane so it can be reopened
+smux-pane close-window %3      # close the whole window %3 is in, as one entry
+smux-pane peek %3              # what close would record (cwd, command, claude session)
+```
+
+A reopened pane comes back in its old slot and directory. A pane that was running Claude Code resumes the exact conversation it had; other processes are not restarted. Window numbers always equal their position in the status bar, so do not rely on a window keeping its number after another window is closed — address windows by name or by pane ID (`%N`), which never changes.
+
 ### Panes and Windows
 
 ```bash

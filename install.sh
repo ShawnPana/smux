@@ -141,6 +141,12 @@ cmd_install() {
   fi
   check_tmux_version
 
+  # 1b. Install jq if missing (smux-pane records panes as JSON)
+  if ! command -v jq >/dev/null 2>&1; then
+    info "jq not found. Installing..."
+    pkg_install jq
+  fi
+
   # 2. Install clipboard tool on Linux if missing
   if [[ "$os" == "linux" ]]; then
     if ! command -v xclip >/dev/null 2>&1 && ! command -v xsel >/dev/null 2>&1; then
@@ -168,6 +174,10 @@ cmd_install() {
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
 
+  info "Downloading smux-pane..."
+  download "$BASE_URL/scripts/smux-pane" "$BIN_DIR/smux-pane"
+  chmod +x "$BIN_DIR/smux-pane"
+
   # 8. Save smux CLI
   info "Installing smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -187,6 +197,7 @@ cmd_install() {
   echo ""
   echo "  Config:       ~/.smux/tmux.conf"
   echo "  tmux-bridge:  ~/.smux/bin/tmux-bridge"
+  echo "  smux-pane:    ~/.smux/bin/smux-pane"
   echo "  smux CLI:     ~/.smux/bin/smux"
   echo ""
   echo "  Run 'smux help' for commands."
@@ -208,6 +219,10 @@ cmd_update() {
   info "Downloading tmux-bridge..."
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
+
+  info "Downloading smux-pane..."
+  download "$BASE_URL/scripts/smux-pane" "$BIN_DIR/smux-pane"
+  chmod +x "$BIN_DIR/smux-pane"
 
   info "Updating smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -260,7 +275,7 @@ smux — one-command tmux setup
 Usage: smux <command>
 
 Commands:
-  install     Install smux (tmux config + tmux-bridge)
+  install     Install smux (tmux config + tmux-bridge + smux-pane)
   update      Update to the latest version
   uninstall   Remove smux and restore previous config
   version     Print version
@@ -269,6 +284,7 @@ Commands:
 Files:
   ~/.smux/tmux.conf          tmux configuration
   ~/.smux/bin/tmux-bridge    cross-pane communication CLI
+  ~/.smux/bin/smux-pane      close/reopen panes and windows (Option+w, Option+Shift+w, Option+Shift+n)
   ~/.smux/bin/smux           this CLI
   ~/.smux/backups/           config backups
 EOF

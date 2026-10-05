@@ -111,6 +111,10 @@ If there are already multiple panes and the layout gets cramped, use `tiled` lay
 tmux select-layout -t SESSION tiled
 ```
 
+### Closing Panes
+
+Prefer `smux-pane close <pane>` over `tmux kill-pane`: it records the pane first so the user (or you, with `smux-pane revive`) can reopen it in the same place, with its Claude Code conversation resumed.
+
 ### Session Management
 
 ```bash
