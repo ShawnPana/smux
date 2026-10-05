@@ -56,16 +56,17 @@ pane_json() {
 # Write a closed-stack entry: window metadata plus the given panes' JSON (on stdin).
 save_entry() {
   local kind="$1" pane="$2"
-  local line session windex wname autorename
+  local line session wid windex wname autorename
   line=$(tmux display-message -p -t "$pane" \
-         "#{session_name}${US}#{window_index}${US}#{window_name}${US}#{automatic-rename}") || return 1
-  IFS="$US" read -r session windex wname autorename <<< "$line"
+         "#{session_name}${US}#{window_id}${US}#{window_index}${US}#{window_name}${US}#{automatic-rename}") || return 1
+  IFS="$US" read -r session wid windex wname autorename <<< "$line"
   mkdir -p "$CLOSED_DIR" 2>/dev/null || return 1
   local record="$CLOSED_DIR/$(date +%Y%m%d-%H%M%S)-$$"
-  jq -s --arg kind "$kind" --arg session "$session" --argjson windex "$windex" \
+  jq -s --arg kind "$kind" --arg session "$session" --arg wid "$wid" --argjson windex "$windex" \
         --arg wname "$wname" --argjson named "$(( autorename == 0 ))" \
-        '{kind: $kind, session: $session, window_index: $windex, window_name: $wname,
-          window_named: ($named == 1), panes: .}' > "$record" 2>/dev/null || { rm -f "$record"; return 1; }
+        '{kind: $kind, session: $session, window_id: $wid, window_index: $windex,
+          window_name: $wname, window_named: ($named == 1), panes: .}' \
+        > "$record" 2>/dev/null || { rm -f "$record"; return 1; }
   # Keep the stack short; the oldest entries fall off.
   ls -t "$CLOSED_DIR" 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
     rm -f "$CLOSED_DIR/$old"
@@ -152,9 +153,9 @@ cmd_revive() {
   fi
   record="$CLOSED_DIR/$record"
 
-  local kind session windex wname named
-  IFS="$US" read -r kind session windex wname named < <(jq -r --arg us "$US" \
-    '[.kind, .session, .window_index, .window_name, .window_named] | map(tostring) | join($us)' "$record")
+  local kind session wid windex wname named
+  IFS="$US" read -r kind session wid windex wname named < <(jq -r --arg us "$US" \
+    '[.kind, .session, .window_id, .window_index, .window_name, .window_named] | map(tostring) | join($us)' "$record")
   local -a panes=()
   local line
   while IFS= read -r line; do panes+=("$line"); done < <(jq -r --arg us "$US" \
@@ -165,9 +166,14 @@ cmd_revive() {
 
   # Fall back to the current session if the original is gone.
   tmux has-session -t "=$session" 2>/dev/null || session=$(tmux display-message -p '#{session_name}')
+  # A pane goes back into its own window if that window still exists (tracked by id, since
+  # indices shift when windows are renumbered). Otherwise the window is recreated at its
+  # old index, pushing whatever moved into that index to the right.
   local window="$session:$windex"
-  local window_exists=0
-  tmux list-windows -t "$session" -F '#{window_index}' 2>/dev/null | grep -qx "$windex" && window_exists=1
+  local window_alive=0 index_taken=0
+  tmux list-windows -t "$session" -F '#{window_id}' 2>/dev/null | grep -qx "$wid" && window_alive=1
+  tmux list-windows -t "$session" -F '#{window_index}' 2>/dev/null | grep -qx "$windex" && index_taken=1
+  (( window_alive )) && window="$session:$wid"
 
   local -a notes=()
   local first_pane="" index cwd command session_id transcript label pane
@@ -179,7 +185,7 @@ cmd_revive() {
       cwd="$HOME"; session_id=""
     fi
 
-    if [[ "$kind" == pane && $window_exists == 1 ]]; then
+    if [[ "$kind" == pane && $window_alive == 1 ]]; then
       # Put the pane back in its old slot: after the pane now at index-1, or first.
       local count
       count=$(tmux display-message -p -t "$window" '#{window_panes}')
@@ -191,13 +197,12 @@ cmd_revive() {
         pane=$(tmux split-window -t "$window.{last}" -c "$cwd" -P -F '#{pane_id}')
       fi
     elif (( ! created_window )); then
-      # Recreate the window at its old index, or right after whatever took that index.
       local -a name_opt=()
       [[ "$named" == true ]] && name_opt=(-n "$wname")
-      if (( window_exists )); then
-        pane=$(tmux new-window -a -t "$window" "${name_opt[@]+"${name_opt[@]}"}" -c "$cwd" -P -F '#{pane_id}')
+      if (( index_taken )); then
+        pane=$(tmux new-window -b -t "$session:$windex" "${name_opt[@]+"${name_opt[@]}"}" -c "$cwd" -P -F '#{pane_id}')
       else
-        pane=$(tmux new-window -t "$window" "${name_opt[@]+"${name_opt[@]}"}" -c "$cwd" -P -F '#{pane_id}')
+        pane=$(tmux new-window -t "$session:$windex" "${name_opt[@]+"${name_opt[@]}"}" -c "$cwd" -P -F '#{pane_id}')
       fi
       window=$(tmux display-message -p -t "$pane" '#{session_name}:#{window_id}')
       created_window=1

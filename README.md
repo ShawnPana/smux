@@ -50,7 +50,7 @@ All keybindings use **Option (Alt)** with no prefix required.
 
 | Key | Action |
 |---|---|
-| `Option+m` | New window |
+| `Option+m` | New window, placed right after the current one |
 | `Option+u` | Next window |
 | `Option+h` | Previous window |
 | `Option+Shift+u/h` | Move window right/left |
