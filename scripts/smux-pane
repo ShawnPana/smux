@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# smux-pane — close a tmux pane so Option+Shift+N can bring it back.
+#
+#   smux-pane close <pane>   remember where the pane was and what it ran, then kill it
+#   smux-pane revive         reopen the most recently closed pane
+#
+# A revived pane opens in the directory the closed one was in. If it was running
+# Claude Code, the same conversation is resumed (the pane -> conversation map that
+# claude-session-record.sh keeps says which one; without it, claude starts fresh).
+# Anything else is not restarted — you get a shell where the pane was.
+
+set -uo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/smux"
+CLOSED_DIR="$STATE_DIR/closed-panes"
+PANES_DIR="$STATE_DIR/claude-panes"
+KEEP=20
+
+pane_key() {
+  local key
+  key=$(tmux display-message -p -t "$1" \
+        '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+  printf '%s' "$key" | tr -c 'A-Za-z0-9.:_-' '_'
+}
+
+# The process the pane's shell is running right now, as a command line ("" if idle).
+foreground_command() {
+  local child
+  child=$(pgrep -P "$1" 2>/dev/null | head -n1 || true)
+  [[ -n "$child" ]] || return 0
+  ps -o args= -p "$child" 2>/dev/null || true
+}
+
+cmd_close() {
+  local pane="${1:?usage: smux-pane close <pane>}"
+  local info cwd pid
+  info=$(tmux display-message -p -t "$pane" '#{pane_current_path}'$'\t''#{pane_pid}') || exit 1
+  cwd=${info%%$'\t'*}
+  pid=${info##*$'\t'}
+
+  local key command session_id="" transcript=""
+  key=$(pane_key "$pane")
+  command=$(foreground_command "$pid")
+  if [[ -n "$key" && -r "$PANES_DIR/$key" ]] && command -v jq >/dev/null 2>&1; then
+    session_id=$(jq -r '.session_id // empty' "$PANES_DIR/$key" 2>/dev/null || true)
+    transcript=$(jq -r '.transcript_path // empty' "$PANES_DIR/$key" 2>/dev/null || true)
+  fi
+
+  if mkdir -p "$CLOSED_DIR" 2>/dev/null && command -v jq >/dev/null 2>&1; then
+    local record="$CLOSED_DIR/$(date +%Y%m%d-%H%M%S)-$$"
+    jq -n --arg cwd "$cwd" --arg command "$command" \
+          --arg session_id "$session_id" --arg transcript "$transcript" \
+          '{cwd: $cwd, command: $command, session_id: $session_id, transcript_path: $transcript}' \
+          > "$record" 2>/dev/null || rm -f "$record"
+    # Keep the stack short; the oldest entries fall off.
+    ls -t "$CLOSED_DIR" 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+      rm -f "$CLOSED_DIR/$old"
+    done
+  fi
+
+  tmux kill-pane -t "$pane"
+}
+
+# Drop any conversation selector from the saved claude args: revive picks the conversation.
+claude_args() {
+  local -a out=()
+  local skip=0 word
+  for word in "$@"; do
+    if (( skip )); then skip=0; continue; fi
+    case "$word" in
+      -r|--resume|-c|--continue) skip=1 ;;
+      --resume=*|--continue=*) ;;
+      *) out+=("$word") ;;
+    esac
+  done
+  printf '%s\n' "${out[@]+"${out[@]}"}"
+}
+
+cmd_revive() {
+  local record
+  record=$(ls -t "$CLOSED_DIR" 2>/dev/null | head -n1 || true)
+  if [[ -z "$record" ]]; then
+    tmux display-message "smux: no closed pane to revive"
+    return 0
+  fi
+  record="$CLOSED_DIR/$record"
+
+  local cwd command session_id transcript
+  cwd=$(jq -r '.cwd // empty' "$record" 2>/dev/null || true)
+  command=$(jq -r '.command // empty' "$record" 2>/dev/null || true)
+  session_id=$(jq -r '.session_id // empty' "$record" 2>/dev/null || true)
+  transcript=$(jq -r '.transcript_path // empty' "$record" 2>/dev/null || true)
+  rm -f "$record"
+
+  local note=""
+  if [[ -z "$cwd" || ! -d "$cwd" ]]; then
+    note="smux: ${cwd:-directory} is gone, revived in ~"
+    cwd="$HOME"
+    session_id=""
+  fi
+
+  local info pane key
+  info=$(tmux split-window -h -c "$cwd" -P -F \
+         '#{pane_id}'$'\t''#{session_name}:#{window_index}.#{pane_index}') || exit 1
+  tmux select-layout tiled
+  pane=${info%%$'\t'*}
+  key=$(printf '%s' "${info##*$'\t'}" | tr -c 'A-Za-z0-9.:_-' '_')
+
+  # Only claude is relaunched; other processes are left to the user.
+  local -a words=()
+  read -r -a words <<< "$command"
+  local prog=""
+  [[ ${#words[@]} -gt 0 ]] && prog=$(basename "${words[0]}")
+  if [[ "$prog" == claude || "$prog" == smux-claude ]]; then
+    local -a args=()
+    while IFS= read -r word; do [[ -n "$word" ]] && args+=("$word"); done \
+      < <(claude_args "${words[@]:1}")
+
+    local -a cmd=(claude)
+    # A subcommand (`claude attach ...`) is rerun as-is; only a plain session gets --resume.
+    local subcommand=0
+    [[ ${#args[@]} -gt 0 && "${args[0]}" != -* ]] && subcommand=1
+    if (( ! subcommand )) && [[ -n "$session_id" && -n "$transcript" && -s "$transcript" ]]; then
+      cmd+=(--resume "$session_id")
+      # Point the pane map at the new pane so a later close/restore finds this conversation.
+      if mkdir -p "$PANES_DIR" 2>/dev/null; then
+        jq -n --arg session_id "$session_id" --arg transcript "$transcript" --arg cwd "$cwd" \
+              '{session_id: $session_id, transcript_path: $transcript, cwd: $cwd}' \
+              > "$PANES_DIR/$key" 2>/dev/null || true
+      fi
+    fi
+    cmd+=("${args[@]+"${args[@]}"}")
+    tmux send-keys -t "$pane" -l "${cmd[*]}"
+    tmux send-keys -t "$pane" Enter
+  fi
+
+  [[ -n "$note" ]] && tmux display-message "$note"
+  return 0
+}
+
+case "${1:-}" in
+  close)  shift; cmd_close "$@" ;;
+  revive) cmd_revive ;;
+  *)
+    echo "usage: smux-pane close <pane> | smux-pane revive" >&2
+    exit 1 ;;
+esac

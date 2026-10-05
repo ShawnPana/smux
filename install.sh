@@ -168,6 +168,10 @@ cmd_install() {
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
 
+  info "Downloading smux-pane..."
+  download "$BASE_URL/scripts/smux-pane" "$BIN_DIR/smux-pane"
+  chmod +x "$BIN_DIR/smux-pane"
+
   # 8. Save smux CLI
   info "Installing smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -187,6 +191,7 @@ cmd_install() {
   echo ""
   echo "  Config:       ~/.smux/tmux.conf"
   echo "  tmux-bridge:  ~/.smux/bin/tmux-bridge"
+  echo "  smux-pane:    ~/.smux/bin/smux-pane"
   echo "  smux CLI:     ~/.smux/bin/smux"
   echo ""
   echo "  Run 'smux help' for commands."
@@ -208,6 +213,10 @@ cmd_update() {
   info "Downloading tmux-bridge..."
   download "$BASE_URL/scripts/tmux-bridge" "$BIN_DIR/tmux-bridge"
   chmod +x "$BIN_DIR/tmux-bridge"
+
+  info "Downloading smux-pane..."
+  download "$BASE_URL/scripts/smux-pane" "$BIN_DIR/smux-pane"
+  chmod +x "$BIN_DIR/smux-pane"
 
   info "Updating smux CLI..."
   download "$BASE_URL/install.sh" "$BIN_DIR/smux"
@@ -269,6 +278,7 @@ Commands:
 Files:
   ~/.smux/tmux.conf          tmux configuration
   ~/.smux/bin/tmux-bridge    cross-pane communication CLI
+  ~/.smux/bin/smux-pane      close/revive panes (Option+w / Option+Shift+n)
   ~/.smux/bin/smux           this CLI
   ~/.smux/backups/           config backups
 EOF

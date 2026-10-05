@@ -24,6 +24,7 @@ This installs:
 - **tmux** if not already installed (via Homebrew, apt, dnf, pacman, or apk)
 - **tmux.conf** with Option-key bindings, mouse support, pane labels, and a minimal status bar
 - **tmux-bridge** CLI for cross-pane agent communication
+- **smux-pane** so a closed pane can be revived with `Option+Shift+n`
 
 Everything lives in `~/.smux/`.
 
@@ -38,6 +39,7 @@ All keybindings use **Option (Alt)** with no prefix required.
 | `Option+i/k/j/l` | Navigate up/down/left/right (no wrap) |
 | `Option+n` | New pane (split + auto-tile) |
 | `Option+w` | Close pane |
+| `Option+Shift+n` | Revive the last closed pane (same directory; resumes its Claude Code conversation if it was running one) |
 | `Option+o` | Cycle layouts |
 | `Option+g` | Mark pane |
 | `Option+y` | Swap with marked pane |
