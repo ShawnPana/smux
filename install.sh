@@ -141,6 +141,12 @@ cmd_install() {
   fi
   check_tmux_version
 
+  # 1b. Install jq if missing (smux-pane records panes as JSON)
+  if ! command -v jq >/dev/null 2>&1; then
+    info "jq not found. Installing..."
+    pkg_install jq
+  fi
+
   # 2. Install clipboard tool on Linux if missing
   if [[ "$os" == "linux" ]]; then
     if ! command -v xclip >/dev/null 2>&1 && ! command -v xsel >/dev/null 2>&1; then
@@ -269,7 +275,7 @@ smux — one-command tmux setup
 Usage: smux <command>
 
 Commands:
-  install     Install smux (tmux config + tmux-bridge)
+  install     Install smux (tmux config + tmux-bridge + smux-pane)
   update      Update to the latest version
   uninstall   Remove smux and restore previous config
   version     Print version
