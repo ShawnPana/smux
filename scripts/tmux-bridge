@@ -3,35 +3,112 @@
 # Any tool that can run bash can use this to talk to other panes.
 set -euo pipefail
 
-VERSION="2.0.0"
+VERSION="3.0.0"
 
 # --- Helpers ---
 
 die() { echo "error: $*" >&2; exit 1; }
 
+# State lives here (guards, trust grants, first-contact records).
+# Everything is validated against a pane fingerprint (the pane's shell pid),
+# so stale entries from a previous boot or a recreated pane invalidate themselves.
+STATE_DIR="${TMUX_BRIDGE_STATE:-$HOME/.smux/state/bridge}"
+
+init_state() {
+  mkdir -p "$STATE_DIR/guards" "$STATE_DIR/trust" "$STATE_DIR/contacts"
+}
+
+# Sanitize a pane id for use in filenames: %66 → _66
+key_of() { echo "${1//%/_}"; }
+
+sender_key() { key_of "${TMUX_PANE:-nosender}"; }
+
+# Fingerprint = the pane's shell pid. Stable for the pane's lifetime,
+# different after reboot or pane recreation — exactly the invalidation we want.
+pane_fp() {
+  tmx display-message -t "$1" -p '#{pane_pid}' 2>/dev/null
+}
+
+pane_loc() {
+  tmx display-message -t "$1" -p '#{session_name}:#{window_index}' 2>/dev/null
+}
+
 # --- Read Guard ---
 # Enforces read-before-act: agents must read a pane before typing/keys.
+# The guard stores the target's fingerprint at read time; if the pane was
+# replaced between read and act, the act is refused.
 
-read_guard_path() {
-  local pane_id="$1"
-  # Sanitize: %66 → _66
-  echo "/tmp/tmux-bridge-read-${pane_id//%/_}"
+GUARD_TTL=600  # seconds; a read older than this is stale — re-read before acting
+
+guard_path() {
+  echo "$STATE_DIR/guards/$(sender_key)__$(key_of "$1")"
 }
 
 mark_read() {
-  touch "$(read_guard_path "$1")"
+  local fp
+  fp=$(pane_fp "$1") || return 0
+  echo "$fp $(date +%s)" > "$(guard_path "$1")"
 }
 
 require_read() {
-  local guard
-  guard=$(read_guard_path "$1")
-  if [[ ! -f "$guard" ]]; then
-    die "must read the pane before interacting. Run: tmux-bridge read $1"
+  local target="$1" guard fp_now fp_then ts now
+  guard=$(guard_path "$target")
+  [[ -f "$guard" ]] || die "must read the pane before interacting. Run: tmux-bridge read $target"
+  read -r fp_then ts < "$guard"
+  fp_now=$(pane_fp "$target") || die "target $target vanished since you read it"
+  if [[ "$fp_now" != "$fp_then" ]]; then
+    rm -f "$guard"
+    die "pane $target was replaced since you read it (different process). Run: tmux-bridge read $target"
+  fi
+  now=$(date +%s)
+  if (( now - ts > GUARD_TTL )); then
+    rm -f "$guard"
+    die "your read of $target is older than ${GUARD_TTL}s — pane layout may have changed. Run: tmux-bridge read $target"
   fi
 }
 
 clear_read() {
-  rm -f "$(read_guard_path "$1")"
+  rm -f "$(guard_path "$1")"
+}
+
+# --- Scope & Trust ---
+# Write ops (type/message/keys) are free within the sender's window.
+# Outside the window, the target must be trusted first (one-time user approval
+# via 'tmux-bridge trust'). Trust is fingerprint-bound: if the target pane is
+# replaced (reboot, pane recreated), the grant silently expires and the agent
+# must ask the user again.
+
+trust_path() {
+  echo "$STATE_DIR/trust/$(sender_key)__$(key_of "$1")"
+}
+
+contact_path() {
+  echo "$STATE_DIR/contacts/$(sender_key)__$(key_of "$1")"
+}
+
+# Check a fingerprint-bound record file; removes it if stale.
+record_valid() {
+  local file="$1" target="$2" fp_stored fp_now
+  [[ -f "$file" ]] || return 1
+  fp_stored=$(awk '{print $1}' "$file")
+  fp_now=$(pane_fp "$target") || { rm -f "$file"; return 1; }
+  if [[ "$fp_stored" != "$fp_now" ]]; then
+    rm -f "$file"
+    return 1
+  fi
+}
+
+require_scope() {
+  local target="$1" sloc tloc
+  # No sender pane → a human operating from outside tmux; scope has no meaning.
+  [[ -n "${TMUX_PANE:-}" ]] || return 0
+  sloc=$(pane_loc "$TMUX_PANE") || return 0
+  tloc=$(pane_loc "$target") || die "cannot locate target $target"
+  [[ "$sloc" == "$tloc" ]] && return 0
+  record_valid "$(trust_path "$target")" "$target" && return 0
+  die "target $target is in $tloc, outside your window ($sloc).
+Cross-window messaging needs the user's approval once.
+Ask the user, then run: tmux-bridge trust $target"
 }
 
 # Detect the correct tmux server socket.
@@ -115,23 +192,33 @@ tmux-bridge — cross-pane communication for AI agents
 Usage: tmux-bridge <command> [args...]
 
 Commands:
-  list                      Show all panes (target, pid, command, size, label)
+  list [--session|--all]    Show panes (default: your window; -s session; -a all)
   type <target> <text>      Type text without pressing Enter
-  message <target> <text>   Type text with auto-prepended sender info and reply target
+  message <target> <text>   Type text with sender header (verbose on first contact)
   read <target> [lines]     Read last N lines from pane (default: 50)
   keys <target> <key>...    Send special keys (Enter, Escape, C-c, etc.)
   name <target> <label>     Label a pane (visible in tmux border)
   resolve <label>           Print pane target for a label
+  trust [target]            Grant cross-window messaging to a pane / list grants
+  untrust <target>          Revoke a grant
   id                        Print this pane's ID ($TMUX_PANE)
   doctor                    Diagnose tmux connectivity issues
   version                   Print version
 
 Target resolution:
-  Targets can be tmux native (session:window.pane, %N) or a label set via 'name'.
-  Labels are resolved automatically — e.g. 'tmux-bridge type codex "hello"' works.
+  %N pane ids, session:win.pane coordinates, or labels set via 'name'.
+  Labels are the recommended address — they survive pane rearrangement.
+  Bare window indexes are not accepted: indexes shift when panes change,
+  which delivers messages to the wrong pane.
+
+Scope:
+  type/message/keys are free within your window. Outside it, the target
+  must be trusted first (user approval → 'tmux-bridge trust <target>').
+  Trust expires automatically when the target pane is replaced.
 
 Environment:
-  TMUX_BRIDGE_SOCKET   Override the tmux server socket path (skips auto-detection)
+  TMUX_BRIDGE_SOCKET   Override the tmux server socket path
+  TMUX_BRIDGE_STATE    Override the state directory (default ~/.smux/state/bridge)
 EOF
   exit 0
 }
@@ -140,28 +227,26 @@ require_tmux() {
   command -v tmux >/dev/null 2>&1 || die "tmux is not installed or not in PATH"
 }
 
-# Resolve a target: if it looks like a tmux target (%N, session:win.pane, pure digits),
-# use it directly; otherwise treat it as a @name label and resolve.
+# Resolve any accepted target form to a canonical pane id (%N).
+# All guard/trust/scope state is keyed on the canonical id.
 resolve_target() {
-  local target="$1"
+  local target="$1" pane
 
-  # tmux pane ID like %0, %12
-  if [[ "$target" =~ ^%[0-9]+$ ]]; then
-    echo "$target"; return
-  fi
-
-  # Looks like a tmux target with colon or dot (session:win.pane)
-  if [[ "$target" == *:* ]] || [[ "$target" == *.* ]]; then
-    echo "$target"; return
-  fi
-
-  # Pure numeric — treat as window index
+  # Bare window index — refuse: indexes shift when panes are created/closed,
+  # which is exactly how messages end up at the wrong agent.
   if [[ "$target" =~ ^[0-9]+$ ]]; then
-    echo "$target"; return
+    die "bare window index '$target' is not accepted (indexes shift when panes change). Use a %id or a label."
   fi
 
-  # Otherwise resolve as a @name label
-  resolve_label "$target"
+  # Label → pane id
+  if [[ ! "$target" =~ ^%[0-9]+$ && "$target" != *:* && "$target" != *.* ]]; then
+    target=$(resolve_label "$target")
+  fi
+
+  # Canonicalize (also validates the target exists)
+  pane=$(tmx display-message -t "$target" -p '#{pane_id}' 2>/dev/null) \
+    || die "invalid target: $1"
+  echo "$pane"
 }
 
 resolve_label() {
@@ -175,12 +260,6 @@ resolve_label() {
   echo "$result"
 }
 
-validate_target() {
-  local target="$1"
-  tmx display-message -t "$target" -p '#{pane_id}' >/dev/null 2>&1 \
-    || die "invalid target: $target"
-}
-
 require_args() {
   local need="$1" have="$2" cmd="$3"
   if (( have < need )); then
@@ -192,10 +271,29 @@ require_args() {
 
 cmd_list() {
   require_tmux
+  local mode="window"
+  case "${1:-}" in
+    -a|--all)     mode="all" ;;
+    -s|--session) mode="session" ;;
+    "") ;;
+    *) die "unknown list flag: $1 (use --session or --all)" ;;
+  esac
+  # Outside tmux there is no "current window" — show everything.
+  [[ -z "${TMUX_PANE:-}" ]] && mode="all"
+
+  local cur_sess="" cur_widx=""
+  if [[ "$mode" != "all" ]]; then
+    IFS='|' read -r cur_sess cur_widx < <(tmx display-message -t "$TMUX_PANE" -p '#{session_name}|#{window_index}')
+  fi
+
   printf "%-8s %-16s %-10s %-25s %-10s %s\n" "TARGET" "SESSION:WIN" "SIZE" "PROCESS" "LABEL" "CWD"
   tmx list-panes -a \
     -F '#{pane_id}|#{session_name}|#{window_index}|#{window_name}|#{pane_pid}|#{pane_width}x#{pane_height}|#{@name}|#{pane_current_path}' \
     2>/dev/null | while IFS='|' read -r id sess widx wname pid size label cwd; do
+      case "$mode" in
+        window)  [[ "$sess" == "$cur_sess" && "$widx" == "$cur_widx" ]] || continue ;;
+        session) [[ "$sess" == "$cur_sess" ]] || continue ;;
+      esac
       # Get the actual running process (deepest child of pane pid)
       local proc child_pid
       proc=$(ps -o comm= -p "$pid" 2>/dev/null || echo "?")
@@ -213,6 +311,10 @@ cmd_list() {
       printf "%-8s %-16s %-10s %-25s %-10s %s\n" \
         "$id" "${sess}:${widx}" "$size" "$proc" "${label:--}" "$cwd"
     done
+  case "$mode" in
+    window)  echo "(your window only — 'list --session' or 'list --all' for more)" ;;
+    session) echo "(your session only — 'list --all' for every pane)" ;;
+  esac
 }
 
 cmd_type() {
@@ -220,7 +322,7 @@ cmd_type() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
+  require_scope "$target"
   require_read "$target"
 
   tmx send-keys -t "$target" -l -- "$2"
@@ -232,23 +334,43 @@ cmd_message() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
+  require_scope "$target"
   require_read "$target"
 
-  # Detect sender identity and location
+  # Detect sender identity
   local sender_pane="${TMUX_PANE:-}"
   if [[ -z "$sender_pane" ]]; then
     die "not running inside a tmux pane (\$TMUX_PANE is unset)"
   fi
   local sender_label
   sender_label=$(tmx display-message -t "$sender_pane" -p '#{@name}' 2>/dev/null || true)
-  local from="${sender_label:-$sender_pane}"
-  local session_win
-  session_win=$(tmx display-message -t "$sender_pane" -p '#{session_name}:#{window_index}.#{pane_index}' 2>/dev/null || true)
+  local who="$sender_pane"
+  [[ -n "$sender_label" ]] && who="${sender_label}@${sender_pane}"
 
-  local header="[tmux-bridge from:${from} pane:${sender_pane} at:${session_win} — load the smux skill to reply]"
+  # First contact gets the reply hint; later messages stay minimal.
+  local header
+  if record_valid "$(contact_path "$target")" "$target"; then
+    header="[smux ${who}]"
+  else
+    header="[smux ${who} | load the smux skill; reply: tmux-bridge msg ${sender_pane}]"
+  fi
+
   tmx send-keys -t "$target" -l -- "${header} $2"
   clear_read "$target"
+
+  # Remember the introduction (fingerprint-bound, expires with the pane)
+  local target_fp
+  target_fp=$(pane_fp "$target") || true
+  if [[ -n "$target_fp" ]]; then
+    echo "$target_fp $target" > "$(contact_path "$target")"
+  fi
+  # Let the receiver reply without a fresh approval: messaging them implies
+  # the reverse path is sanctioned.
+  local sender_fp
+  sender_fp=$(pane_fp "$sender_pane") || true
+  if [[ -n "$sender_fp" ]]; then
+    echo "$sender_fp $sender_pane" > "$STATE_DIR/trust/$(key_of "$target")__$(key_of "$sender_pane")"
+  fi
 }
 
 cmd_read() {
@@ -256,7 +378,6 @@ cmd_read() {
   require_args 1 $# "read"
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
   local lines="${2:-50}"
 
   tmx capture-pane -t "$target" -p -J -S "-${lines}"
@@ -268,7 +389,7 @@ cmd_keys() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
+  require_scope "$target"
   require_read "$target"
   shift
 
@@ -283,7 +404,6 @@ cmd_name() {
   require_tmux
   local target
   target=$(resolve_target "$1")
-  validate_target "$target"
 
   tmx set-option -p -t "$target" @name "$2"
 }
@@ -292,6 +412,48 @@ cmd_resolve() {
   require_args 1 $# "resolve"
   require_tmux
   resolve_label "$1"
+}
+
+cmd_trust() {
+  require_tmux
+  if [[ $# -eq 0 ]]; then
+    # List this sender's grants and their validity
+    local skey found=false
+    skey=$(sender_key)
+    printf "%-10s %-22s %s\n" "TARGET" "LOCATION" "STATUS"
+    for f in "$STATE_DIR/trust/${skey}__"*; do
+      [[ -f "$f" ]] || continue
+      found=true
+      local tkey target loc status
+      tkey="${f##*__}"
+      target="%${tkey#_}"
+      if record_valid "$f" "$target" 2>/dev/null; then
+        loc=$(pane_loc "$target")
+        status="valid"
+      else
+        loc="-"
+        status="expired (pane replaced)"
+      fi
+      printf "%-10s %-22s %s\n" "$target" "$loc" "$status"
+    done
+    $found || echo "(no grants)"
+    return
+  fi
+
+  local target fp
+  target=$(resolve_target "$1")
+  fp=$(pane_fp "$target") || die "cannot fingerprint $target"
+  echo "$fp $target" > "$(trust_path "$target")"
+  echo "trusted: $target ($(pane_loc "$target")) — valid until this pane is replaced"
+}
+
+cmd_untrust() {
+  require_args 1 $# "untrust"
+  require_tmux
+  local target
+  target=$(resolve_target "$1")
+  rm -f "$(trust_path "$target")"
+  echo "untrusted: $target"
 }
 
 cmd_id() {
@@ -312,6 +474,7 @@ cmd_doctor() {
   echo "TMUX_PANE:          ${TMUX_PANE:-<unset>}"
   echo "TMUX:               ${TMUX:-<unset>}"
   echo "TMUX_BRIDGE_SOCKET: ${TMUX_BRIDGE_SOCKET:-<unset>}"
+  echo "State dir:          $STATE_DIR"
 
   # Socket from $TMUX
   if [[ -n "${TMUX:-}" ]]; then
@@ -361,6 +524,9 @@ cmd_doctor() {
     local labeled
     labeled=$(tmx list-panes -a -F '#{@name}' 2>/dev/null | grep -cv '^$' || echo 0)
     echo "Labeled panes:      $labeled"
+    local trusts
+    trusts=$(find "$STATE_DIR/trust" -type f 2>/dev/null | wc -l | tr -d ' ')
+    echo "Trust grants:       $trusts"
   fi
 
   echo "---"
@@ -379,16 +545,17 @@ cmd_doctor() {
 
 [[ $# -eq 0 ]] && usage
 
-# cmd_id and cmd_doctor(detect) don't need socket pre-init for the id case
+# cmd_id doesn't need socket pre-init
 case "$1" in
   id)      shift; cmd_id "$@"; exit ;;
   -h|--help|help) usage ;;
   version) echo "tmux-bridge $VERSION"; exit ;;
 esac
 
-# All other commands need the socket
+# All other commands need the socket and state dir
 require_tmux
 init_socket
+init_state
 
 case "$1" in
   list)    shift; cmd_list "$@" ;;
@@ -398,6 +565,8 @@ case "$1" in
   keys)    shift; cmd_keys "$@" ;;
   name)    shift; cmd_name "$@" ;;
   resolve) shift; cmd_resolve "$@" ;;
+  trust)   shift; cmd_trust "$@" ;;
+  untrust) shift; cmd_untrust "$@" ;;
   doctor)  shift; cmd_doctor "$@" ;;
   *)       die "unknown command: $1. Run 'tmux-bridge' for usage." ;;
 esac
