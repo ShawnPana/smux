@@ -75,10 +75,31 @@ error: must read the pane before interacting. Run: tmux-bridge read codex
 ## Target Resolution
 
 Targets can be:
-- **tmux native**: `session:window.pane` (e.g. `shared:0.1`), pane ID (`%3`), or window index (`0`)
-- **label**: Any string set via `tmux-bridge name` — resolved automatically
+- **label**: Any string set via `tmux-bridge name` — the recommended address, it survives pane rearrangement
+- **tmux native**: pane ID (`%3`) or `session:window.pane` (e.g. `shared:0.1`)
 
 This means `tmux-bridge type codex "hello"` works directly if the pane was labeled `codex`.
+
+Bare window indexes are refused: indexes renumber whenever panes are created or closed, which silently redirects your message to whatever pane now holds that index. Every accepted target is canonicalized to a `%id` before any state is keyed on it.
+
+### Identity Fingerprinting
+
+Read guards store the target pane's **fingerprint** (its shell pid) at read time and re-verify it on `type`/`keys`. A mismatch means the pane was replaced — reboot, respawn, or a new pane reusing old coordinates — and the action is refused with an instruction to re-read. Guards expire after 600 seconds.
+
+### Scope and Trust
+
+Write operations (`type`/`keys`/`message`) are free within the sender's window. Outside it — another window or session — the CLI refuses until the target is trusted:
+
+```
+error: target %49 is in doll:0, outside your window (shared:0).
+Cross-window messaging needs the user's approval once.
+Ask the user, then run: tmux-bridge trust %49
+```
+
+- **Grants are per sender-pane and fingerprint-bound.** When the target pane is replaced, the grant expires silently and the next send is refused again — ask the user again.
+- **Reverse trust is automatic.** When A messages B, the bridge records a grant allowing B → A, so replying never requires a fresh approval.
+- **Reads are never scoped.** Reading is how you verify targets and debug; only writes can mis-deliver.
+- `trust` with no argument lists your grants and their validity.
 
 ## Messaging Convention
 

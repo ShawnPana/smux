@@ -46,13 +46,26 @@ error: must read the pane before interacting. Run: tmux-bridge read codex
 | `tmux-bridge keys <target> <key>...` | Send special keys | `tmux-bridge keys codex Enter` |
 | `tmux-bridge name <target> <label>` | Label a pane (visible in tmux border) | `tmux-bridge name %3 codex` |
 | `tmux-bridge resolve <label>` | Print pane target for a label | `tmux-bridge resolve codex` |
+| `tmux-bridge trust [target]` | Grant cross-window messaging / list grants | `tmux-bridge trust %49` |
+| `tmux-bridge untrust <target>` | Revoke a grant | `tmux-bridge untrust %49` |
 | `tmux-bridge id` | Print this pane's ID | `tmux-bridge id` |
 
 ### Target Resolution
 
 Targets can be:
-- **tmux native**: `session:window.pane` (e.g. `shared:0.1`), pane ID (`%3`), or window index (`0`)
-- **label**: Any string set via `tmux-bridge name` — resolved automatically
+- **label**: Any string set via `tmux-bridge name` — the recommended address, it survives pane rearrangement
+- **tmux native**: pane ID (`%3`) or `session:window.pane` (e.g. `shared:0.1`)
+
+Bare window indexes are refused: indexes renumber whenever panes are created or closed, which silently redirects your message to whatever pane now holds that index. The CLI also fingerprints every read — if the target pane was replaced between your `read` and your `type`/`keys`, the send is refused and you re-read.
+
+### Scope: your window is your room
+
+You may freely message panes in your own window. Anything beyond — another window or another session — needs the user's approval first, because on a busy server one stale id delivers your message into an unrelated project.
+
+- Ask the user in conversation. Once they agree, record it: `tmux-bridge trust <target>`. The CLI blocks cross-window sends until then.
+- The grant persists — no re-asking — until the target pane is replaced (reboot, pane recreated). The fingerprint check expires it automatically; when that happens, ask the user again.
+- Replies are pre-sanctioned: whoever messages you is automatically trusted for your reply, so answering never needs a fresh approval.
+- Reading any pane is always allowed — it's how you verify targets before sending and debug.
 
 ### Read-Act-Read Cycle
 
